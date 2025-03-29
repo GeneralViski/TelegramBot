@@ -1,0 +1,7 @@
+telegram:
+  enabled: true
+  bot-token: "YOUR_BOT_TOKEN"
+  chat-id: "YOUR_CHAT_ID"
+  message-format: "[Minecraft] {player}: {message}"
+  command-format: "[Minecraft] Игрок {player} использовал команду: {command}"
+  denied-command-format: "[Minecraft] Игрок {player} попытался использовать команду без прав: {command}"

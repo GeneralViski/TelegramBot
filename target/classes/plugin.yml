@@ -1,0 +1,16 @@
+name: TelegramLink
+version: 1.1
+main: com.yourname.telegrambot.TelegramLink
+api-version: "1.21"
+description: Отправляет сообщения и команды из Minecraft чата в Telegram
+author: General_Viski
+commands:
+  tgbot:
+    description: Включение/выключение бота
+    usage: /tgbot <on|off|status>
+    permission: telegramlink.toggle
+    permission-message: "§cУ вас нет прав на использование этой команды!"
+permissions:
+  chattotelegram.toggle:
+    description: Разрешает управление ботом
+    default: op

@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" build-on-make="true" name="TelegramLink:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/TelegramLink_jar</output-path>
+    <root id="archive" name="TelegramLink.jar">
+      <element id="module-output" name="TelegramLink" />
+    </root>
+  </artifact>
+</component>
