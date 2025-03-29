@@ -1,6 +1,8 @@
 package com.yourname.telegrambot;
 
 import org.bukkit.Bukkit;
+import org.bukkit.OfflinePlayer;
+import org.bukkit.Statistic;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.file.FileConfiguration;
@@ -19,6 +21,9 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.List;
 import java.util.ArrayList;
@@ -31,6 +36,7 @@ public class TelegramLink extends JavaPlugin implements Listener {
     private String messageFormat;
     private String commandFormat;
     private String deniedCommandFormat;
+    private String playerInfoFormat;
     private long lastUpdateId = 0;
 
     @Override
@@ -51,7 +57,6 @@ public class TelegramLink extends JavaPlugin implements Listener {
             getLogger().info("Бот Telegram активен. Ожидание команд...");
         }
 
-
         getLogger().info("Плагин включен. Статус бота: " + (botEnabled ? "ВКЛ" : "ВЫКЛ"));
     }
 
@@ -62,6 +67,12 @@ public class TelegramLink extends JavaPlugin implements Listener {
         messageFormat = config.getString("telegram.message-format", "[Minecraft] {player}: {message}");
         commandFormat = config.getString("telegram.command-format", "[Minecraft] Игрок {player} использовал команду: {command}");
         deniedCommandFormat = config.getString("telegram.denied-command-format", "[Minecraft] Игрок {player} попытался использовать команду без прав: {command}");
+        playerInfoFormat = config.getString("telegram.player-info-format",
+                "📊 Информация об игроке {player}:\n" +
+                        "🕒 Дата регистрации: {first-played}\n" +
+                        "⏱ Общее время игры: {play-time}\n" +
+                        "📍 Последний вход: {last-played}\n" +
+                        "🏠 Мир: {world}");
         botEnabled = config.getBoolean("telegram.enabled", true);
     }
 
@@ -135,7 +146,87 @@ public class TelegramLink extends JavaPlugin implements Listener {
             }
 
             sendTelegramMessage(message);
+        } else if (text.startsWith("/check ")) {
+            String playerName = text.substring(text.indexOf(" ") + 1).trim();
+            Player player = Bukkit.getPlayerExact(playerName);
+
+            // Проверяем, не пустое ли имя
+            if (playerName.isEmpty()) {
+                sendTelegramMessage("⚠ Пожалуйста, укажите ник игрока: /player <ник>");
+                return;
+            }
+
+            if (player != null) {
+                sendPlayerInfo(player);
+            } else {
+                // Проверяем оффлайн-игроков
+                Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+                    // Получаем оффлайн-игрока через Bukkit.getOfflinePlayer()
+                    OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(playerName);
+
+                    // Альтернативный способ проверки существования игрока
+                    boolean playerExists = false;
+                    try {
+                        // Проверяем, есть ли данные о первом входе
+                        if (offlinePlayer.getFirstPlayed() > 0) {
+                            playerExists = true;
+                        } else {
+                            // Дополнительная проверка для некоторых версий Bukkit/Spigot
+                            playerExists = offlinePlayer.getLastPlayed() > 0;
+                        }
+                    } catch (Exception e) {
+                        playerExists = false;
+                    }
+
+                    if (!playerExists) {
+                        sendTelegramMessage("⚠ Игрок '" + playerName + "' не найден на сервере.");
+                        return;
+                    }
+                    try {
+                        Date firstPlayed = new Date(Bukkit.getOfflinePlayer(playerName).getFirstPlayed());
+                        Date lastPlayed = new Date(Bukkit.getOfflinePlayer(playerName).getLastPlayed());
+                        long playTimeTicks = Bukkit.getOfflinePlayer(playerName).getStatistic(Statistic.PLAY_ONE_MINUTE);
+                        long playTimeHours = TimeUnit.HOURS.convert(playTimeTicks / 20, TimeUnit.SECONDS);
+
+                        SimpleDateFormat dateFormat = new SimpleDateFormat("dd.MM.yyyy HH:mm");
+
+                        String info = playerInfoFormat
+                                .replace("{player}", playerName)
+                                .replace("{first-played}", dateFormat.format(firstPlayed))
+                                .replace("{play-time}", formatPlayTime(playTimeTicks))
+                                .replace("{last-played}", dateFormat.format(lastPlayed))
+                                .replace("{world}", "Оффлайн");
+
+                        sendTelegramMessage(info);
+                    } catch (Exception e) {
+                        sendTelegramMessage("⚠ Игрок " + playerName + " не найден или данные недоступны");
+                        getLogger().warning("Ошибка получения информации об игроке: " + e.getMessage());
+                    }
+                });
+            }
         }
+    }
+
+    private void sendPlayerInfo(Player player) {
+        SimpleDateFormat dateFormat = new SimpleDateFormat("dd.MM.yyyy HH:mm");
+        long playTimeTicks = player.getStatistic(Statistic.PLAY_ONE_MINUTE);
+
+        String info = playerInfoFormat
+                .replace("{player}", player.getName())
+                .replace("{first-played}", dateFormat.format(new Date(player.getFirstPlayed())))
+                .replace("{play-time}", formatPlayTime(playTimeTicks))
+                .replace("{last-played}", dateFormat.format(new Date(player.getLastPlayed())))
+                .replace("{world}", player.getWorld().getName());
+
+        sendTelegramMessage(info);
+    }
+
+    private String formatPlayTime(long ticks) {
+        long seconds = ticks / 20;
+        long hours = TimeUnit.HOURS.convert(seconds, TimeUnit.SECONDS);
+        long minutes = TimeUnit.MINUTES.convert(seconds, TimeUnit.SECONDS) - hours * 60;
+
+        return String.format("%d ч. %d мин.", hours, minutes);
     }
 
     private void saveConfigState() {
