@@ -255,10 +255,17 @@ public class TelegramLink extends JavaPlugin implements Listener {
                 URL url = new URL("https://api.telegram.org/bot" + botToken + "/sendMessage");
                 HttpURLConnection conn = (HttpURLConnection) url.openConnection();
                 conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
                 conn.setDoOutput(true);
 
-                String json = String.format("{\"chat_id\":\"%s\",\"text\":\"%s\"}", chatId, escapeJson(text));
+                // Формируем JSON вручную (лучше использовать библиотеку)
+                String json = String.format("{\"chat_id\":\"%s\",\"text\":\"%s\"}",
+                        chatId,
+                        text.replace("\\", "\\\\")
+                                .replace("\"", "\\\"")
+                                .replace("\n", "\\n")
+                                .replace("\r", "\\r")
+                                .replace("\t", "\\t"));
 
                 try (OutputStream os = conn.getOutputStream()) {
                     byte[] input = json.getBytes(StandardCharsets.UTF_8);
@@ -267,14 +274,22 @@ public class TelegramLink extends JavaPlugin implements Listener {
 
                 int responseCode = conn.getResponseCode();
                 if (responseCode != 200) {
-                    getLogger().warning("Ошибка отправки в Telegram: " + responseCode + " - " + conn.getResponseMessage());
+                    // Читаем тело ошибки для диагностики
+                    try (BufferedReader br = new BufferedReader(
+                            new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
+                        StringBuilder response = new StringBuilder();
+                        String responseLine;
+                        while ((responseLine = br.readLine()) != null) {
+                            response.append(responseLine.trim());
+                        }
+                        getLogger().warning("Ошибка Telegram API: " + responseCode + " - " +
+                                conn.getResponseMessage() + " - " + response.toString());
+                    }
                 } else {
                     getLogger().info("Сообщение успешно отправлено в Telegram");
                 }
-
-                conn.disconnect();
             } catch (IOException e) {
-                getLogger().warning("Ошибка при отправке в Telegram: " + e.getMessage());
+                getLogger().warning("Ошибка отправки в Telegram: " + e.getMessage());
             }
         });
     }
