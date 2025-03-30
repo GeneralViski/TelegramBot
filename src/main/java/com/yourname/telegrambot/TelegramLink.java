@@ -130,93 +130,132 @@ public class TelegramLink extends JavaPlugin implements Listener {
     }
 
     private void processTelegramCommand(String text) {
-        if (text.startsWith("/online")) {
-            int onlineCount = Bukkit.getOnlinePlayers().size();
-            String message = "🟢 На сервере сейчас " + onlineCount + " игрок(ов):\n";
+        getLogger().info("[Telegram] Получена команда: " + text);
 
-            List<String> playerNames = new ArrayList<>();
+        try {
+            String command = text.trim();
+
+            if (command.equalsIgnoreCase("/online") || command.equalsIgnoreCase("/online@YourBotName")) {
+                handleOnlineCommand();
+            }
+            else if (command.toLowerCase().startsWith("/player ") || command.toLowerCase().startsWith("/player@yourbotname ")) {
+                String playerName = command.substring(command.indexOf(" ") + 1).trim();
+                handlePlayerCommand(playerName);
+            }
+            else if (command.equalsIgnoreCase("/help") || command.equalsIgnoreCase("/help@YourBotName")) {
+                sendHelpMessage();
+            }
+            else if (command.toLowerCase().startsWith("/"))  {
+                getLogger().warning("[Telegram] Неизвестная команда: " + command);
+                sendTelegramMessage("❌ Неизвестная команда. Доступные команды:\n" +
+                        "/online - список игроков онлайн\n" +
+                        "/player <ник> - информация об игроке\n" +
+                        "/help - справка по командам");
+            }
+        } catch (Exception e) {
+            getLogger().severe("[Telegram] Ошибка обработки команды: " + e.getMessage());
+            sendTelegramMessage("⚠ Произошла ошибка при обработке команды. Попробуйте позже.");
+        }
+    }
+
+    private void handleOnlineCommand() {
+        try {
+            StringBuilder onlinePlayers = new StringBuilder();
+            int count = 0;
+
             for (Player player : Bukkit.getOnlinePlayers()) {
-                playerNames.add(player.getName());
+                if (count > 0) onlinePlayers.append("\n");
+                onlinePlayers.append(player.getName());
+                count++;
             }
 
-            if (!playerNames.isEmpty()) {
-                message += String.join(", ", playerNames);
+            String message;
+            if (count == 0) {
+                message = "🕸 На сервере сейчас нет игроков";
             } else {
-                message += "Никого нет онлайн";
+                message = "🟢 Онлайн игроки (" + count + "):\n" + onlinePlayers.toString();
             }
 
             sendTelegramMessage(message);
-        } else if (text.startsWith("/check ")) {
-            String playerName = text.substring(text.indexOf(" ") + 1).trim();
-            Player player = Bukkit.getPlayerExact(playerName);
-
-            // Проверяем, не пустое ли имя
-            if (playerName.isEmpty()) {
-                sendTelegramMessage("⚠ Пожалуйста, укажите ник игрока: /player <ник>");
-                return;
-            }
-
-            if (player != null) {
-                sendPlayerInfo(player);
-            } else {
-                // Проверяем оффлайн-игроков
-                Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-                    // Получаем оффлайн-игрока через Bukkit.getOfflinePlayer()
-                    OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(playerName);
-
-                    // Альтернативный способ проверки существования игрока
-                    boolean playerExists = false;
-                    try {
-                        // Проверяем, есть ли данные о первом входе
-                        if (offlinePlayer.getFirstPlayed() > 0) {
-                            playerExists = true;
-                        } else {
-                            // Дополнительная проверка для некоторых версий Bukkit/Spigot
-                            playerExists = offlinePlayer.getLastPlayed() > 0;
-                        }
-                    } catch (Exception e) {
-                        playerExists = false;
-                    }
-
-                    if (!playerExists) {
-                        sendTelegramMessage("⚠ Игрок '" + playerName + "' не найден на сервере.");
-                        return;
-                    }
-                    try {
-                        Date firstPlayed = new Date(Bukkit.getOfflinePlayer(playerName).getFirstPlayed());
-                        Date lastPlayed = new Date(Bukkit.getOfflinePlayer(playerName).getLastPlayed());
-                        long playTimeTicks = Bukkit.getOfflinePlayer(playerName).getStatistic(Statistic.PLAY_ONE_MINUTE);
-                        long playTimeHours = TimeUnit.HOURS.convert(playTimeTicks / 20, TimeUnit.SECONDS);
-
-                        SimpleDateFormat dateFormat = new SimpleDateFormat("dd.MM.yyyy HH:mm");
-
-                        String info = playerInfoFormat
-                                .replace("{player}", playerName)
-                                .replace("{first-played}", dateFormat.format(firstPlayed))
-                                .replace("{play-time}", formatPlayTime(playTimeTicks))
-                                .replace("{last-played}", dateFormat.format(lastPlayed))
-                                .replace("{world}", "Оффлайн");
-
-                        sendTelegramMessage(info);
-                    } catch (Exception e) {
-                        sendTelegramMessage("⚠ Игрок " + playerName + " не найден или данные недоступны");
-                        getLogger().warning("Ошибка получения информации об игроке: " + e.getMessage());
-                    }
-                });
-            }
+            getLogger().info("[Telegram] Отправлен ответ на /online");
+        } catch (Exception e) {
+            getLogger().severe("[Telegram] Ошибка обработки /online: " + e.getMessage());
+            sendTelegramMessage("⚠ Не удалось получить список игроков");
         }
+    }
+
+
+    private void handlePlayerCommand(String playerName) {
+        if (playerName.isEmpty()) {
+            sendTelegramMessage("ℹ Использование: /player <ник>");
+            return;
+        }
+
+        // Проверяем онлайн-игроков сначала
+        Player onlinePlayer = Bukkit.getPlayerExact(playerName);
+        if (onlinePlayer != null) {
+            sendPlayerInfo(onlinePlayer);
+            return;
+        }
+
+        // Для оффлайн-игроков выполняем в асинхронном режиме
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            try {
+                OfflinePlayer offlinePlayer = Bukkit.getOfflinePlayer(playerName);
+
+                if (!offlinePlayer.hasPlayedBefore()) {
+                    sendTelegramMessage("❌ Игрок '" + playerName + "' не найден на сервере");
+                    return;
+                }
+
+                sendOfflinePlayerInfo(offlinePlayer);
+            } catch (Exception e) {
+                getLogger().warning("[Telegram] Ошибка обработки /player " + playerName + ": " + e.getMessage());
+                sendTelegramMessage("⚠ Ошибка при получении информации об игроке " + playerName);
+            }
+        });
+    }
+
+    private void sendHelpMessage() {
+        String helpText = "📚 Доступные команды:\n\n" +
+                "/online - Показать онлайн игроков\n" +
+                "/player <ник> - Информация об игроке\n" +
+                "/help - Эта справка\n\n" +
+                "⚙ Бот работает с Minecraft сервером " + Bukkit.getServer().getName();
+
+        sendTelegramMessage(helpText);
     }
 
     private void sendPlayerInfo(Player player) {
         SimpleDateFormat dateFormat = new SimpleDateFormat("dd.MM.yyyy HH:mm");
         long playTimeTicks = player.getStatistic(Statistic.PLAY_ONE_MINUTE);
 
-        String info = playerInfoFormat
+        String info = getConfig().getString("telegram.player-info-format")
                 .replace("{player}", player.getName())
+                .replace("{status}", "🟢 Онлайн")
+                .replace("{uuid}", player.getUniqueId().toString())
                 .replace("{first-played}", dateFormat.format(new Date(player.getFirstPlayed())))
                 .replace("{play-time}", formatPlayTime(playTimeTicks))
                 .replace("{last-played}", dateFormat.format(new Date(player.getLastPlayed())))
-                .replace("{world}", player.getWorld().getName());
+                .replace("{world}", player.getWorld().getName())
+                .replace("{time}", getCurrentTime());
+
+        sendTelegramMessage(info);
+    }
+
+    private void sendOfflinePlayerInfo(OfflinePlayer player) {
+        SimpleDateFormat dateFormat = new SimpleDateFormat("dd.MM.yyyy HH:mm");
+        long playTimeTicks = player.getStatistic(Statistic.PLAY_ONE_MINUTE);
+
+        String info = getConfig().getString("telegram.player-info-format")
+                .replace("{player}", player.getName() != null ? player.getName() : "Unknown")
+                .replace("{status}", "🔴 Оффлайн")
+                .replace("{uuid}", player.getUniqueId().toString())
+                .replace("{first-played}", dateFormat.format(new Date(player.getFirstPlayed())))
+                .replace("{play-time}", formatPlayTime(playTimeTicks))
+                .replace("{last-played}", dateFormat.format(new Date(player.getLastPlayed())))
+                .replace("{world}", "Не в игре")
+                .replace("{time}", getCurrentTime());
 
         sendTelegramMessage(info);
     }
@@ -290,20 +329,18 @@ public class TelegramLink extends JavaPlugin implements Listener {
         return false;
     }
 
+    private String getCurrentTime() {
+        return new SimpleDateFormat("dd.MM.yyyy HH:mm:ss").format(new Date());
+    }
+
     @EventHandler
     public void onPlayerChat(AsyncPlayerChatEvent event) {
         if (!botEnabled) return;
-        if (botToken == null || botToken.isEmpty() || chatId == null || chatId.isEmpty()) return;
 
-        Player player = event.getPlayer();
-        String message = event.getMessage();
-
-        String formatted = messageFormat
-                .replace("{player}", player.getName())
-                .replace("{message}", message);
-
-        // Логируем отправку сообщения в Telegram
-        getLogger().info("Отправка сообщения в Telegram от " + player.getName() + ": " + message);
+        String formatted = getConfig().getString("telegram.message-format")
+                .replace("{player}", event.getPlayer().getName())
+                .replace("{message}", event.getMessage())
+                .replace("{time}", getCurrentTime());
 
         sendTelegramMessage(formatted);
     }
@@ -311,19 +348,14 @@ public class TelegramLink extends JavaPlugin implements Listener {
     @EventHandler
     public void onPlayerCommand(PlayerCommandPreprocessEvent event) {
         if (!botEnabled) return;
-        if (botToken == null || botToken.isEmpty() || chatId == null || chatId.isEmpty()) return;
 
-        Player player = event.getPlayer();
-        String command = event.getMessage();
+        String formatted = getConfig().getString("telegram.command-format")
+                .replace("{player}", event.getPlayer().getName())
+                .replace("{command}", event.getMessage())
+                .replace("{time}", getCurrentTime());
 
-        String formatted = commandFormat
-                .replace("{player}", player.getName())
-                .replace("{command}", command);
-
-        getLogger().info("Игрок " + player.getName() + " использовал команду: " + command);
         sendTelegramMessage(formatted);
     }
-
     @EventHandler
     public void onConsoleCommand(ServerCommandEvent event) {
         if (!botEnabled) return;
