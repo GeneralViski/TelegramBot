@@ -366,7 +366,8 @@ public class TelegramLink extends JavaPlugin implements Listener {
 
         String formatted = commandFormat
                 .replace("{player}", sender)
-                .replace("{command}", "/" + command);
+                .replace("{command}", "/" + command)
+                .replace("{time}", getCurrentTime());  // Добавляем время
 
         getLogger().info("Консоль использовала команду: " + command);
         sendTelegramMessage(formatted);
