@@ -197,13 +197,38 @@ public class TelegramLink extends JavaPlugin implements Listener {
     private void handleConsoleCommand(String cmd) {
         Bukkit.getScheduler().runTask(this, () -> {
             try {
-                // Выполнение команды строго от имени консоли сервера
+                // Сначала пробуем выполнить как ванильную от имени консоли и перехватить вывод
                 CustomCommandSender customSender = new CustomCommandSender();
-                boolean success = Bukkit.dispatchCommand(new CommandWrapper(Bukkit.getConsoleSender(), customSender), cmd);
-                String result = customSender.getOutput();
-                if (!success) {
+                boolean vanillaSuccess = false;
+                String vanillaResult = null;
+                try {
+                    vanillaSuccess = Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
+                    // Попробуем получить вывод через customSender, если команда поддерживает вывод
+                    Bukkit.dispatchCommand(customSender, cmd);
+                    vanillaResult = customSender.getOutput();
+                } catch (Exception ex) {
+                    getLogger().warning("[Telegram] Исключение при выполнении ванильной команды: " + ex.getMessage());
+                }
+                if (vanillaSuccess) {
+                    if (vanillaResult != null && !vanillaResult.isEmpty()) {
+                        sendTelegramMessage("Результат команды:\n" + vanillaResult);
+                    } else {
+                        sendTelegramMessage("✅ Команда выполнена: " + cmd);
+                    }
+                    return;
+                }
+                // Если не получилось — пробуем только как плагиновую
+                boolean pluginSuccess = false;
+                String result = null;
+                try {
+                    pluginSuccess = Bukkit.dispatchCommand(customSender, cmd);
+                    result = customSender.getOutput();
+                } catch (Exception ex) {
+                    getLogger().warning("[Telegram] Исключение при выполнении плагиновой команды: " + ex.getMessage());
+                }
+                if (!pluginSuccess) {
                     sendTelegramMessage("❌ Команда не поддерживается или синтаксис неверный. Попробуйте явно указать имя игрока или используйте команду, поддерживаемую консолью.\nПример: /cmd gamemode survival ИмяИгрока");
-                } else if (result.isEmpty()) {
+                } else if (result == null || result.isEmpty()) {
                     sendTelegramMessage("✅ Команда выполнена (нет вывода): " + cmd);
                 } else {
                     sendTelegramMessage("Результат команды:\n" + result);
@@ -213,6 +238,20 @@ public class TelegramLink extends JavaPlugin implements Listener {
                         "\nВозможно, команда не поддерживается консолью или синтаксис неверный. Попробуйте явно указать имя игрока.");
             }
         });
+    }
+
+    // Проверка, является ли команда ванильной
+    private boolean isVanillaCommand(String cmd) {
+        String[] vanillaCommands = {
+                "me", "tell", "w", "msg", "say", "help", "trigger", "seed", "list", "scoreboard", "ban", "ban-ip", "banlist", "pardon", "pardon-ip", "kick", "op", "deop", "stop", "save-all", "save-off", "save-on", "publish", "setidletimeout", "whitelist", "gamemode", "xp", "give", "tp", "teleport", "summon", "setblock", "fill", "clone", "replaceitem", "clear", "difficulty", "effect", "enchant", "gamerule", "setworldspawn", "spawnpoint", "time", "weather", "worldborder", "title", "playsound", "particle", "testfor", "testforblock", "testforblocks", "blockdata", "entitydata", "stats", "spreadplayers", "tp", "tellraw", "scoreboard", "team", "forceload", "function", "reload", "advancement", "attribute", "bossbar", "data", "datapack", "defaultgamemode", "locate", "recipe", "teammsg", "spectate", "stop", "schedule", "item", "jfr", "kick", "ban", "ban-ip", "banlist", "pardon", "pardon-ip", "whitelist", "save-all", "save-off", "save-on", "setidletimeout", "publish", "op", "deop", "list", "say", "me", "tell", "msg", "w", "help", "trigger", "seed"
+        };
+        String trimmed = cmd.trim();
+        if (trimmed.startsWith("/")) trimmed = trimmed.substring(1);
+        String base = trimmed.split(" ")[0].toLowerCase();
+        for (String vcmd : vanillaCommands) {
+            if (base.equals(vcmd)) return true;
+        }
+        return false;
     }
 
     private void handleOnlineCommand() {
