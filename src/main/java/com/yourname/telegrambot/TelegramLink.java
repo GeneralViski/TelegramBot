@@ -14,6 +14,17 @@ import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.server.ServerCommandEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
+
+import org.bukkit.Server;
+import org.bukkit.command.CommandSender;
+import org.bukkit.permissions.Permission;
+import org.bukkit.permissions.PermissionAttachment;
+import org.bukkit.permissions.PermissionAttachmentInfo;
+import org.bukkit.plugin.Plugin;
+import java.util.UUID;
+import java.util.HashSet;
+import java.util.Set;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -30,6 +41,7 @@ import java.util.ArrayList;
 
 public class TelegramLink extends JavaPlugin implements Listener {
 
+    private String lastUpdateJson; // Добавьте это поле в класс
     private boolean botEnabled;
     private String botToken;
     private String chatId;
@@ -38,6 +50,7 @@ public class TelegramLink extends JavaPlugin implements Listener {
     private String deniedCommandFormat;
     private String playerInfoFormat;
     private long lastUpdateId = 0;
+    private List<Long> allowedTelegramIds; // Список разрешенных Telegram ID
 
     @Override
     public void onEnable() {
@@ -74,6 +87,15 @@ public class TelegramLink extends JavaPlugin implements Listener {
                         "📍 Последний вход: {last-played}\n" +
                         "🏠 Мир: {world}");
         botEnabled = config.getBoolean("telegram.enabled", true);
+        // Загружаем список разрешенных Telegram ID
+        allowedTelegramIds = new ArrayList<>();
+        for (String id : config.getStringList("telegram.allowed-ids")) {
+            try {
+                allowedTelegramIds.add(Long.parseLong(id));
+            } catch (NumberFormatException e) {
+                getLogger().warning("Некорректный Telegram ID в конфиге: " + id);
+            }
+        }
     }
 
     private void startTelegramUpdatesChecker() {
@@ -111,10 +133,12 @@ public class TelegramLink extends JavaPlugin implements Listener {
     }
 
     private void processTelegramUpdates(String json) {
-        // Упрощенный парсинг JSON (в реальном проекте лучше использовать библиотеку)
-        String[] updates = json.split("\"update_id\":");
-        for (int i = 1; i < updates.length; i++) {
-            try {
+        this.lastUpdateJson = json; // Сохраняем сырой JSON для последующего использования
+
+        try {
+            // Упрощенный парсинг JSON
+            String[] updates = json.split("\"update_id\":");
+            for (int i = 1; i < updates.length; i++) {
                 String update = updates[i];
                 long updateId = Long.parseLong(update.split(",")[0].trim());
                 lastUpdateId = Math.max(lastUpdateId, updateId);
@@ -123,9 +147,9 @@ public class TelegramLink extends JavaPlugin implements Listener {
                     String text = update.split("\"text\":\"")[1].split("\"")[0];
                     processTelegramCommand(text);
                 }
-            } catch (Exception e) {
-                getLogger().warning("Ошибка обработки обновления Telegram: " + e.getMessage());
             }
+        } catch (Exception e) {
+            getLogger().warning("Ошибка обработки обновления Telegram: " + e.getMessage());
         }
     }
 
@@ -144,17 +168,61 @@ public class TelegramLink extends JavaPlugin implements Listener {
             }
             else if (command.equalsIgnoreCase("/help") || command.equalsIgnoreCase("/help@YourBotName")) {
                 sendHelpMessage();
+            } else if (command.toLowerCase().startsWith("/cmd ")) {
+                // Выполнение консольной команды через Telegram
+                long userId = getTelegramUserIdFromUpdate(); // Реализуйте этот метод для получения userId
+                if (isAllowedTelegramUser(userId)) {
+                    String cmd = command.substring(5).trim();
+                    handleConsoleCommand(cmd);
+                } else {
+                    sendTelegramMessage("🔒 Доступ запрещен. Ваш ID: " + userId);
+                    getLogger().warning("[Telegram] Попытка выполнения команды без прав: " + command);
+                }
+            }
+            else if (command.toLowerCase().startsWith("/execute ") || command.matches("(?i)/execute@\\w+ .+")) {
+                // Извлекаем ID пользователя Telegram (вам нужно реализовать этот метод)
+                long userId = getTelegramUserIdFromUpdate();
+
+                if (isAllowedTelegramUser(userId)) {
+                    String cmd = command.replaceFirst("(?i)/execute@?\\w+\\s+", "").trim();
+                    handleExecuteCommand(cmd);
+                } else {
+                    sendTelegramMessage("🔒 Доступ запрещен.\n" +
+                            "Ваш ID: " + userId + "\n" +
+                            "Обратитесь к администратору для добавления в config.yml");
+                    getLogger().warning("[Telegram] Попытка выполнения команды без прав: " + command);
+                }
             }
             else if (command.toLowerCase().startsWith("/"))  {
                 getLogger().warning("[Telegram] Неизвестная команда: " + command);
                 sendTelegramMessage("❌ Неизвестная команда. Доступные команды:\n" +
                         "/online - список игроков онлайн\n" +
                         "/player <ник> - информация об игроке\n" +
-                        "/help - справка по командам");
+                        "/help - справка по командам\n" +
+                        "/cmd <команда> - выполнить консольную команду");
             }
         } catch (Exception e) {
             getLogger().severe("[Telegram] Ошибка обработки команды: " + e.getMessage());
             sendTelegramMessage("⚠ Произошла ошибка при обработке команды. Попробуйте позже.");
+        }
+    }
+
+    // Выполнение консольной команды и отправка результата в Telegram
+    private void handleConsoleCommand(String cmd) {
+        try {
+            Process process = Runtime.getRuntime().exec(cmd);
+            StringBuilder output = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    output.append(line).append("\n");
+                }
+            }
+            int exitCode = process.waitFor();
+            String result = output.length() > 0 ? output.toString() : "(нет вывода)";
+            sendTelegramMessage("Результат команды:\n" + result + "\nКод выхода: " + exitCode);
+        } catch (Exception e) {
+            sendTelegramMessage("Ошибка при выполнении команды: " + e.getMessage());
         }
     }
 
@@ -225,6 +293,308 @@ public class TelegramLink extends JavaPlugin implements Listener {
 
         sendTelegramMessage(helpText);
     }
+
+    private void handleExecuteCommand(String command) {
+        if (command.isEmpty()) {
+            sendTelegramMessage("ℹ Использование: /execute <команда>");
+            return;
+        }
+
+        Bukkit.getScheduler().runTask(this, () -> {
+            try {
+                // Создаем консольный CommandSender
+                CommandSender sender = Bukkit.getConsoleSender();
+
+                // Создаем наш кастомный CommandSender для перехвата вывода
+                CustomCommandSender customSender = new CustomCommandSender();
+
+                // Перенаправляем вывод в наш кастомный sender
+                Bukkit.dispatchCommand(new CommandWrapper(sender, customSender), command);
+
+                // Получаем результат
+                String result = customSender.getOutput();
+
+                // Формируем ответ
+                String response;
+                if (result.isEmpty()) {
+                    response = "✅ Команда выполнена (нет вывода): `" + command + "`";
+                } else {
+                    response = "📋 Результат `" + command + "`:\n```\n" +
+                            result + "\n```";
+                }
+
+                sendTelegramMessage(response);
+            } catch (Exception e) {
+                String errorMsg = e.getMessage() != null ? e.getMessage() : "Неизвестная ошибка";
+                sendTelegramMessage("❌ Ошибка выполнения `" + command + "`:\n" + errorMsg);
+                getLogger().warning("[Telegram] Ошибка выполнения: " + command + " - " + errorMsg);
+            }
+        });
+    }
+
+    // Класс-обертка для комбинирования двух CommandSender
+    private static class CommandWrapper implements CommandSender {
+        private final CommandSender primary;
+        private final CommandSender secondary;
+
+        public CommandWrapper(CommandSender primary, CommandSender secondary) {
+            this.primary = primary;
+            this.secondary = secondary;
+        }
+
+        @Override
+        public void sendMessage(String message) {
+            primary.sendMessage(message);
+            secondary.sendMessage(message);
+        }
+
+        @Override
+        public void sendMessage(String[] messages) {
+            primary.sendMessage(messages);
+            secondary.sendMessage(messages);
+        }
+
+        @Override
+        public void sendMessage(java.util.UUID sender, String message) {
+            primary.sendMessage(sender, message);
+            secondary.sendMessage(sender, message);
+        }
+
+        @Override
+        public void sendMessage(java.util.UUID sender, String[] messages) {
+            primary.sendMessage(sender, messages);
+            secondary.sendMessage(sender, messages);
+        }
+
+        // Реализация остальных методов CommandSender, делегирующая primary sender
+        @Override
+        public Server getServer() {
+            return primary.getServer();
+        }
+
+        @Override
+        public String getName() {
+            return primary.getName();
+        }
+
+        @Override
+        public boolean isOp() {
+            return primary.isOp();
+        }
+
+        @Override
+        public void setOp(boolean value) {
+            primary.setOp(value);
+        }
+
+        @Override
+        public Spigot spigot() {
+            return primary.spigot();
+        }
+
+        @Override
+        public boolean isPermissionSet(String name) {
+            return primary.isPermissionSet(name);
+        }
+
+        @Override
+        public boolean isPermissionSet(Permission perm) {
+            return primary.isPermissionSet(perm);
+        }
+
+        @Override
+        public boolean hasPermission(String name) {
+            return primary.hasPermission(name);
+        }
+
+        @Override
+        public boolean hasPermission(Permission perm) {
+            return primary.hasPermission(perm);
+        }
+
+        @Override
+        public PermissionAttachment addAttachment(Plugin plugin, String name, boolean value) {
+            return primary.addAttachment(plugin, name, value);
+        }
+
+        @Override
+        public PermissionAttachment addAttachment(Plugin plugin) {
+            return primary.addAttachment(plugin);
+        }
+
+        @Override
+        public PermissionAttachment addAttachment(Plugin plugin, String name, boolean value, int ticks) {
+            return primary.addAttachment(plugin, name, value, ticks);
+        }
+
+        @Override
+        public PermissionAttachment addAttachment(Plugin plugin, int ticks) {
+            return primary.addAttachment(plugin, ticks);
+        }
+
+        @Override
+        public void removeAttachment(PermissionAttachment attachment) {
+            primary.removeAttachment(attachment);
+        }
+
+        @Override
+        public void recalculatePermissions() {
+            primary.recalculatePermissions();
+        }
+
+        @Override
+        public Set<PermissionAttachmentInfo> getEffectivePermissions() {
+            return primary.getEffectivePermissions();
+        }
+        // ... остальные методы CommandSender аналогично
+    }
+
+    // Внутренний класс для кастомного CommandSender
+    private class CustomCommandSender implements CommandSender {
+        private final StringBuilder output = new StringBuilder();
+
+        @Override
+        public void sendMessage(String message) {
+            output.append(message).append("\n");
+        }
+
+        @Override
+        public void sendMessage(String[] messages) {
+            for (String msg : messages) {
+                output.append(msg).append("\n");
+            }
+        }
+
+        @Override
+        public void sendMessage(UUID sender, String message) {
+            output.append(message).append("\n");
+        }
+
+        @Override
+        public void sendMessage(UUID sender, String[] messages) {
+            for (String msg : messages) {
+                output.append(msg).append("\n");
+            }
+        }
+
+        @Override
+        public Server getServer() {
+            return Bukkit.getServer();
+        }
+
+        @Override
+        public String getName() {
+            return "TelegramBot";
+        }
+
+        @Override
+        public boolean isOp() {
+            return true;
+        }
+
+        @Override
+        public void setOp(boolean value) {
+            // Не требуется
+        }
+
+        @Override
+        public boolean isPermissionSet(String name) {
+            return true;
+        }
+
+        @Override
+        public boolean isPermissionSet(Permission perm) {
+            return true;
+        }
+
+        @Override
+        public boolean hasPermission(String name) {
+            return true;
+        }
+
+        @Override
+        public boolean hasPermission(Permission perm) {
+            return true;
+        }
+
+        @Override
+        public PermissionAttachment addAttachment(Plugin plugin, String name, boolean value) {
+            return null;
+        }
+
+        @Override
+        public PermissionAttachment addAttachment(Plugin plugin) {
+            return null;
+        }
+
+        @Override
+        public PermissionAttachment addAttachment(Plugin plugin, String name, boolean value, int ticks) {
+            return null;
+        }
+
+        @Override
+        public PermissionAttachment addAttachment(Plugin plugin, int ticks) {
+            return null;
+        }
+
+        @Override
+        public void removeAttachment(PermissionAttachment attachment) {
+        }
+
+        @Override
+        public void recalculatePermissions() {
+        }
+
+        @Override
+        public Set<PermissionAttachmentInfo> getEffectivePermissions() {
+            return new HashSet<>();
+        }
+
+        @Override
+        public Spigot spigot() {
+            return new Spigot();
+        }
+
+        public String getOutput() {
+            return output.toString().trim();
+        }
+    }
+
+    private boolean isAllowedTelegramUser(long userId) {
+        return allowedTelegramIds.contains(userId);
+    }
+
+    private long getTelegramUserIdFromUpdate() {
+        if (lastUpdateJson == null) {
+            getLogger().warning("lastUpdateJson is null - невозможно получить ID пользователя");
+            return -1;
+        }
+
+        try {
+            // Ищем последнее сообщение в JSON
+            int lastMessageIndex = lastUpdateJson.lastIndexOf("\"message\":");
+            if (lastMessageIndex == -1) return -1;
+
+            // Ищем блок "from" внутри последнего сообщения
+            int fromIndex = lastUpdateJson.indexOf("\"from\":{", lastMessageIndex);
+            if (fromIndex == -1) return -1;
+
+            // Извлекаем ID пользователя
+            int idStart = lastUpdateJson.indexOf("\"id\":", fromIndex) + 5;
+            if (idStart < 5) return -1;
+
+            int idEnd = lastUpdateJson.indexOf(",", idStart);
+            if (idEnd == -1) idEnd = lastUpdateJson.indexOf("}", idStart);
+            if (idEnd == -1) return -1;
+
+            String idStr = lastUpdateJson.substring(idStart, idEnd).trim();
+            return Long.parseLong(idStr);
+        } catch (Exception e) {
+            getLogger().warning("Ошибка получения Telegram ID: " + e.getMessage());
+            return -1;
+        }
+    }
+
 
     private void sendPlayerInfo(Player player) {
         SimpleDateFormat dateFormat = new SimpleDateFormat("dd.MM.yyyy HH:mm");
@@ -373,49 +743,21 @@ public class TelegramLink extends JavaPlugin implements Listener {
         sendTelegramMessage(formatted);
     }
 
-    private void sendTelegramMessage(String text) {
-        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            try {
-                URL url = new URL("https://api.telegram.org/bot" + botToken + "/sendMessage");
-                HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-                conn.setDoOutput(true);
-
-                // Формируем JSON вручную (лучше использовать библиотеку)
-                String json = String.format("{\"chat_id\":\"%s\",\"text\":\"%s\"}",
-                        chatId,
-                        text.replace("\\", "\\\\")
-                                .replace("\"", "\\\"")
-                                .replace("\n", "\\n")
-                                .replace("\r", "\\r")
-                                .replace("\t", "\\t"));
-
-                try (OutputStream os = conn.getOutputStream()) {
-                    byte[] input = json.getBytes(StandardCharsets.UTF_8);
-                    os.write(input, 0, input.length);
-                }
-
-                int responseCode = conn.getResponseCode();
-                if (responseCode != 200) {
-                    // Читаем тело ошибки для диагностики
-                    try (BufferedReader br = new BufferedReader(
-                            new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
-                        StringBuilder response = new StringBuilder();
-                        String responseLine;
-                        while ((responseLine = br.readLine()) != null) {
-                            response.append(responseLine.trim());
-                        }
-                        getLogger().warning("Ошибка Telegram API: " + responseCode + " - " +
-                                conn.getResponseMessage() + " - " + response.toString());
-                    }
-                } else {
-                    getLogger().info("Сообщение успешно отправлено в Telegram");
-                }
-            } catch (IOException e) {
-                getLogger().warning("Ошибка отправки в Telegram: " + e.getMessage());
+    // Отправка сообщения в Telegram
+    private void sendTelegramMessage(String message) {
+        try {
+            URL url = new URL("https://api.telegram.org/bot" + botToken + "/sendMessage");
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            String data = "chat_id=" + chatId + "&text=" + java.net.URLEncoder.encode(message, "UTF-8");
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(data.getBytes(StandardCharsets.UTF_8));
             }
-        });
+            conn.getInputStream().close();
+        } catch (Exception e) {
+            getLogger().warning("Ошибка отправки сообщения в Telegram: " + e.getMessage());
+        }
     }
 
     private String escapeJson(String input) {
