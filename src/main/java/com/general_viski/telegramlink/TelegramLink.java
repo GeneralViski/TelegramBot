@@ -1,4 +1,4 @@
-package com.yourname.telegrambot;
+package com.general_viski.telegramlink;
 
 import org.bukkit.Bukkit;
 import org.bukkit.OfflinePlayer;
@@ -179,20 +179,6 @@ public class TelegramLink extends JavaPlugin implements Listener {
                     getLogger().warning("[Telegram] Попытка выполнения команды без прав: " + command);
                 }
             }
-            else if (command.toLowerCase().startsWith("/execute ") || command.matches("(?i)/execute@\\w+ .+")) {
-                // Извлекаем ID пользователя Telegram (вам нужно реализовать этот метод)
-                long userId = getTelegramUserIdFromUpdate();
-
-                if (isAllowedTelegramUser(userId)) {
-                    String cmd = command.replaceFirst("(?i)/execute@?\\w+\\s+", "").trim();
-                    handleExecuteCommand(cmd);
-                } else {
-                    sendTelegramMessage("🔒 Доступ запрещен.\n" +
-                            "Ваш ID: " + userId + "\n" +
-                            "Обратитесь к администратору для добавления в config.yml");
-                    getLogger().warning("[Telegram] Попытка выполнения команды без прав: " + command);
-                }
-            }
             else if (command.toLowerCase().startsWith("/"))  {
                 getLogger().warning("[Telegram] Неизвестная команда: " + command);
                 sendTelegramMessage("❌ Неизвестная команда. Доступные команды:\n" +
@@ -209,21 +195,24 @@ public class TelegramLink extends JavaPlugin implements Listener {
 
     // Выполнение консольной команды и отправка результата в Telegram
     private void handleConsoleCommand(String cmd) {
-        try {
-            Process process = Runtime.getRuntime().exec(cmd);
-            StringBuilder output = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    output.append(line).append("\n");
+        Bukkit.getScheduler().runTask(this, () -> {
+            try {
+                // Выполнение команды строго от имени консоли сервера
+                CustomCommandSender customSender = new CustomCommandSender();
+                boolean success = Bukkit.dispatchCommand(new CommandWrapper(Bukkit.getConsoleSender(), customSender), cmd);
+                String result = customSender.getOutput();
+                if (!success) {
+                    sendTelegramMessage("❌ Команда не поддерживается или синтаксис неверный. Попробуйте явно указать имя игрока или используйте команду, поддерживаемую консолью.\nПример: /cmd gamemode survival ИмяИгрока");
+                } else if (result.isEmpty()) {
+                    sendTelegramMessage("✅ Команда выполнена (нет вывода): " + cmd);
+                } else {
+                    sendTelegramMessage("Результат команды:\n" + result);
                 }
+            } catch (Exception e) {
+                sendTelegramMessage("Ошибка при выполнении команды: " + e.getMessage() +
+                        "\nВозможно, команда не поддерживается консолью или синтаксис неверный. Попробуйте явно указать имя игрока.");
             }
-            int exitCode = process.waitFor();
-            String result = output.length() > 0 ? output.toString() : "(нет вывода)";
-            sendTelegramMessage("Результат команды:\n" + result + "\nКод выхода: " + exitCode);
-        } catch (Exception e) {
-            sendTelegramMessage("Ошибка при выполнении команды: " + e.getMessage());
-        }
+        });
     }
 
     private void handleOnlineCommand() {
@@ -288,48 +277,12 @@ public class TelegramLink extends JavaPlugin implements Listener {
         String helpText = "📚 Доступные команды:\n\n" +
                 "/online - Показать онлайн игроков\n" +
                 "/player <ник> - Информация об игроке\n" +
-                "/help - Эта справка\n\n" +
+                "/help - Эта справка\n" +
+                "/cmd <команда> - Выполнить консольную команду на сервере (только для разрешённых пользователей)\n" +
+                "/tgbot <on|off|status|reload> - Управление ботом (только на сервере)\n\n" +
                 "⚙ Бот работает с Minecraft сервером " + Bukkit.getServer().getName();
 
         sendTelegramMessage(helpText);
-    }
-
-    private void handleExecuteCommand(String command) {
-        if (command.isEmpty()) {
-            sendTelegramMessage("ℹ Использование: /execute <команда>");
-            return;
-        }
-
-        Bukkit.getScheduler().runTask(this, () -> {
-            try {
-                // Создаем консольный CommandSender
-                CommandSender sender = Bukkit.getConsoleSender();
-
-                // Создаем наш кастомный CommandSender для перехвата вывода
-                CustomCommandSender customSender = new CustomCommandSender();
-
-                // Перенаправляем вывод в наш кастомный sender
-                Bukkit.dispatchCommand(new CommandWrapper(sender, customSender), command);
-
-                // Получаем результат
-                String result = customSender.getOutput();
-
-                // Формируем ответ
-                String response;
-                if (result.isEmpty()) {
-                    response = "✅ Команда выполнена (нет вывода): `" + command + "`";
-                } else {
-                    response = "📋 Результат `" + command + "`:\n```\n" +
-                            result + "\n```";
-                }
-
-                sendTelegramMessage(response);
-            } catch (Exception e) {
-                String errorMsg = e.getMessage() != null ? e.getMessage() : "Неизвестная ошибка";
-                sendTelegramMessage("❌ Ошибка выполнения `" + command + "`:\n" + errorMsg);
-                getLogger().warning("[Telegram] Ошибка выполнения: " + command + " - " + errorMsg);
-            }
-        });
     }
 
     // Класс-обертка для комбинирования двух CommandSender
