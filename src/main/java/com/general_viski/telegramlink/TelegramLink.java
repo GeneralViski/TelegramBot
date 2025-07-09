@@ -13,6 +13,8 @@ import org.bukkit.event.player.AsyncPlayerChatEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.server.ServerCommandEvent;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 
 
 import org.bukkit.Server;
@@ -735,6 +737,20 @@ public class TelegramLink extends JavaPlugin implements Listener {
         sendTelegramMessage(formatted);
     }
 
+    @EventHandler
+    public void onPlayerJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+        String message = "🔵 Игрок " + player.getName() + " подключился к серверу.";
+        sendTelegramMessage(message);
+    }
+
+    @EventHandler
+    public void onPlayerQuit(PlayerQuitEvent event) {
+        Player player = event.getPlayer();
+        String message = "🔴 Игрок " + player.getName() + " вышел с сервера.";
+        sendTelegramMessage(message);
+    }
+
     // Отправка сообщения в Telegram
     private void sendTelegramMessage(String message) {
         try {
@@ -742,7 +758,7 @@ public class TelegramLink extends JavaPlugin implements Listener {
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setDoOutput(true);
-            String data = "chat_id=" + chatId + "&text=" + java.net.URLEncoder.encode(message, "UTF-8");
+            String data = "chat_id=" + chatId + "&text=" + java.net.URLEncoder.encode(message, "UTF-8") + "&parse_mode=HTML";
             try (OutputStream os = conn.getOutputStream()) {
                 os.write(data.getBytes(StandardCharsets.UTF_8));
             }
